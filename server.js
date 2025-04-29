@@ -2,13 +2,20 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const fs = require('fs');
-const { v4: uuidv4 } = require('uuid'); // For generating session IDs
+const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 
 const app = express();
 const PORT = 3000;
 
-app.use(cors());
+// ✅ Allow all origins temporarily for local file testing
+const corsOptions = {
+  origin: '*',
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type'],
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // 🧠 Store separate histories per user session
@@ -21,7 +28,7 @@ function loadCompanyKnowledge(clientId) {
     return fs.readFileSync(knowledgePath, 'utf8');
   } else {
     console.warn(`⚠️ No knowledge base found for clientId: ${clientId}`);
-    return ''; // Empty fallback
+    return '';
   }
 }
 
@@ -49,7 +56,6 @@ app.post('/chat', async (req, res) => {
 You are a professional AI assistant for a business identified as ${clientId}.
 
 Rules you MUST follow at all times:
-
 - ONLY answer questions based on the business's provided knowledge base.
 - If unsure or outside the provided data, politely respond: "I'm not sure about that. Please contact us directly for more information."
 - Keep responses friendly, professional, and no more than 3 sentences max.
