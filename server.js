@@ -1,8 +1,10 @@
+require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
+const { v4: uuidv4 } = require('uuid'); // For generating session IDs
+const path = require('path');
 
 const app = express();
 const PORT = 3000;
@@ -10,74 +12,101 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 
+// 🧠 Store separate histories per user session
 let userHistories = {}; // { sessionId: [ { role: 'user', content: '...' }, { role: 'assistant', content: '...' } ] }
 
-const companyKnowledge = fs.existsSync('company_knowledge.txt') ? fs.readFileSync('company_knowledge.txt', 'utf8') : '';
+// 🧠 Function to dynamically load company knowledge based on clientId
+function loadCompanyKnowledge(clientId) {
+  const knowledgePath = path.join(__dirname, 'knowledge_bases', `${clientId}.txt`);
+  if (fs.existsSync(knowledgePath)) {
+    return fs.readFileSync(knowledgePath, 'utf8');
+  } else {
+    console.warn(`⚠️ No knowledge base found for clientId: ${clientId}`);
+    return ''; // Empty fallback
+  }
+}
 
 app.post('/chat', async (req, res) => {
-  const { message, sessionId } = req.body;
+  const { message, sessionId, clientId } = req.body;
 
-  console.log(`Session [${sessionId}] says: ${message}`);
+  console.log(`Session [${sessionId}] (${clientId}) says: ${message}`);
 
-  if (!sessionId) {
-    return res.status(400).json({ error: 'Session ID is required.' });
+  if (!sessionId || !clientId) {
+    return res.status(400).json({ error: 'Session ID and Client ID are required.' });
   }
 
+  // 🧠 Initialize session history if it doesn't exist
   if (!userHistories[sessionId]) {
     userHistories[sessionId] = [];
   }
 
+  // 🧠 Add new user message to that session's history
   userHistories[sessionId].push({ role: 'user', content: message });
 
+  // 🧠 Load the correct company's knowledge base
+  const companyKnowledge = loadCompanyKnowledge(clientId);
+
   const systemPrompt = `
-You are a professional AI assistant working for Nokomis Tattoo.
+You are a professional AI assistant for a business identified as ${clientId}.
 
-Rules you MUST follow:
+Rules you MUST follow at all times:
 
-- ONLY discuss tattoo booking, pricing, artist info, or shop policies.
-- Responses must be 1-3 short, clear, professional sentences.
-- Vary your wording slightly each time, even if questions are similar.
-- NEVER provide personal, political, or medical advice.
-- Always maintain a polite, helpful, and businesslike tone.
+- ONLY answer questions based on the business's provided knowledge base.
+- If unsure or outside the provided data, politely respond: "I'm not sure about that. Please contact us directly for more information."
+- Keep responses friendly, professional, and no more than 3 sentences max.
+- Stay on-topic. Do not engage in unrelated conversation.
 
-Internal knowledge reference:
+Business-specific knowledge:
 ${companyKnowledge}
+
+Conversation history:
 `;
 
+  // 🧠 Build full conversation from that user's history
+  let conversationHistory = userHistories[sessionId].map(entry => {
+    return `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.content}`;
+  }).join('\n');
+
+  const finalPrompt = `${systemPrompt}\n\n${conversationHistory}\nAssistant:`;
+
   try {
-    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model: 'gpt-4', // (or 'gpt-3.5-turbo' if you want cheaper costs)
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...userHistories[sessionId].map(m => ({ role: m.role, content: m.content })),
-        { role: 'user', content: message }
-      ],
-      temperature: 0.7, // 🔥 More varied replies
-      max_tokens: 300 // Keep answers short
-    }, {
+    const response = await axios({
+      method: 'post',
+      url: 'https://api.openai.com/v1/chat/completions',
       headers: {
+        'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json'
+      },
+      data: {
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: conversationHistory },
+        ],
+        temperature: 0.4,
+        max_tokens: 500,
       }
     });
 
-    const botReply = response.data.choices[0].message.content.trim();
-
-    userHistories[sessionId].push({ role: 'assistant', content: botReply });
-
-    res.json({ response: botReply });
-
+    if (response.data && response.data.choices && response.data.choices[0].message.content) {
+      const aiReply = response.data.choices[0].message.content.trim();
+      userHistories[sessionId].push({ role: 'assistant', content: aiReply });
+      res.json({ response: aiReply });
+    } else {
+      res.json({ response: '[No AI response]' });
+    }
   } catch (error) {
-    console.error('Error contacting OpenAI:', error.response?.data || error.message);
+    console.error('Error talking to OpenAI:', error.message, error.response?.data);
     res.status(500).json({ error: 'OpenAI server error.' });
   }
 });
 
+// Optional: Endpoint to generate a new session ID if frontend needs it
 app.get('/new-session', (req, res) => {
   const newSessionId = uuidv4();
   res.json({ sessionId: newSessionId });
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
