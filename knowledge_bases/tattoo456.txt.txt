@@ -1,0 +1,7 @@
+- Haircuts start at $45 depending on the stylist.
+- Color Services available, starting at $90.
+- Book appointments online at salonwebsite.com.
+- 24-hour cancellation policy applies.
+- Location: 123 Main St, Minneapolis.
+- Parking available behind the building.
+- Stylists: Alex specializes in coloring. Jordan specializes in cutting.
